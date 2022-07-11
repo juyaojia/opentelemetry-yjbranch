@@ -1,0 +1,19 @@
+receivers:
+  windowsperfcounters:
+    metrics:
+      metric: 
+        description: desc
+        unit: "1"
+        gauge:
+processors:
+  nop:
+
+exporters:
+  nop:
+
+service:
+  pipelines:
+    metrics:
+      receivers: [windowsperfcounters]
+      processors: [nop]
+      exporters: [nop]
