@@ -127,6 +127,8 @@ func Run(c *Config, logger *zap.Logger) error {
         wg := sync.WaitGroup{}
         var running uint32 = 1
         for i := 0; i < c.WorkerCount; i++ {
+                var maxDur int = 1000
+                var minDur int = 500
                 wg.Add(1)
                 w := worker{
                         numTraces:        c.NumTraces,
@@ -138,6 +140,9 @@ func Run(c *Config, logger *zap.Logger) error {
                         logger:           logger.With(zap.Int("worker", i)),
                         traceTypes:       c.TotalTraceTypes,
                         serviceNames:     services,
+                        // hard coded
+                        maxDuration:      maxDur,
+                        minDuration:      minDur,
             tracerProviders:  tracerProviders,
                 }
                 go w.simulateTraces()

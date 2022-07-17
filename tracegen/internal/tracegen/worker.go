@@ -30,6 +30,7 @@ import (
         "golang.org/x/time/rate"
 )
 
+
 type worker struct {
         running          *uint32         // pointer to shared flag that indicates it's time to stop the test
         numTraces        int             // how many traces the worker has to generate (only when duration==0)
@@ -40,14 +41,22 @@ type worker struct {
         logger           *zap.Logger
         traceTypes        int
         serviceNames      [12]string
+        maxDuration       int
+        minDuration       int
     tracerProviders  []*sdktrace.TracerProvider
 }
 
 const (
         fakeIP string = "1.2.3.4"
 
-        fakeSpanDuration = 100000 * time.Microsecond
+        startTime := time.Now()
+
+        // fakeSpanDuration = 123 * time.Microsecond
 )
+
+func (w worker) getSingleFakeSpanDuration(totalSpansDuration int, numSpansinTrace int) int{
+    return getRandomNum(w.min, w.max)/numSpansinTrace
+}
 
 func (w worker) setUpTracers() []trace.Tracer {
     toReturn := make([]trace.Tracer, 0, len(w.tracerProviders))
@@ -60,14 +69,15 @@ func (w worker) setUpTracers() []trace.Tracer {
     return toReturn
 }
 
-func (w worker) addChild(parentCtx context.Context, tracer trace.Tracer, message string, serviceName string, httpStatusCode string, httpUrl string) context.Context {
+func (w worker) addChild(parentCtx context.Context, tracer trace.Tracer, message string, serviceName string, httpStatusCode string, httpUrl string, spanStartTime int, spanDuration int) context.Context {
     childCtx, child := tracer.Start(parentCtx, message, trace.WithAttributes(
         attribute.String("span.kind", getRandSpanKind()), // is there a semantic convention for this?
         attribute.String("service.name", serviceName),
         semconv.HTTPStatusCodeKey.String(httpStatusCode),
         semconv.HTTPURLKey.String(httpUrl),
-    ))
-    opt := trace.WithTimestamp(time.Now().Add(fakeSpanDuration))
+    ), trace.WithTimestamp(spanStartTime))
+
+    opt := trace.WithTimestamp(spanStartTime.Add(spanDuration))
     child.End(opt)
     return childCtx
 }
@@ -142,7 +152,14 @@ func (w worker) simulateTraces() {
     w.wg.Done()
 }
 
-
+func getLayerEndTime(startTime time.Time, singleSpanDuration int, layer int) time.Time{
+    if layer <= 0 {
+        // exception handling
+        return time.Now()
+    } else {
+        return startTime+singleSpanDuration*layer*time.Microsecond
+    }
+}
 func (w worker) simulateTrace1(limiter *rate.Limiter, tracers []trace.Tracer) {
     spanKind, serviceName, httpStatusCode, httpUrl := w.getRootAttribute(0)
     ctx, sp := tracers[0].Start(context.Background(), "lets-go", trace.WithAttributes(
@@ -152,31 +169,43 @@ func (w worker) simulateTrace1(limiter *rate.Limiter, tracers []trace.Tracer) {
         semconv.HTTPURLKey.String(httpUrl),
     ))
 
-    child1Ctx := w.addChild(ctx, tracers[0], "1", w.serviceNames[0], httpStatusCode, httpUrl)
-    w.addChild(child1Ctx, tracers[4], "11", w.serviceNames[4], httpStatusCode, httpUrl)
 
-    w.addChild(ctx, tracers[0], "2", w.serviceNames[0], httpStatusCode, httpUrl)
+    // need to do error checking!
+    totalSpans := 24
 
-    child3Ctx := w.addChild(ctx, tracers[0], "3", w.serviceNames[3], httpStatusCode, httpUrl)
-    grandchild3Ctx := w.addChild(child3Ctx, tracers[8], "31", w.serviceNames[8], httpStatusCode, httpUrl)
-    greatgrandchild3Ctx := w.addChild(grandchild3Ctx, tracers[8], "32", w.serviceNames[8], httpStatusCode, httpUrl)
-    w.addChild(greatgrandchild3Ctx, tracers[7], "33", w.serviceNames[7], httpStatusCode, httpUrl)
+    traceDuration := getRandomNum(w.minDuration, w.maxDuration)
+    singleSpanDuration := getSingleFakeSpanDuration(traceDuration, totalSpans)
+    firstLayerDuration := getLayerEndTime(startTime, singleSpanDuration, 1)
+    secondLayerDuration := getLayerEndTime(startTime, singleSpanDuration, 2)
+    thirdLayerDuration := getLayerEndTime(startTime, singleSpanDuration, 3)
+    fourthLayerDuration := getLayerEndTime(startTime, singleSpanDuration, 4)
+
+
+    child1Ctx := w.addChild(ctx, tracers[0], "1", w.serviceNames[0], httpStatusCode, httpUrl, firstLayerDuration, singleSpanDuration)
+    w.addChild(child1Ctx, tracers[4], "11", w.serviceNames[4], httpStatusCode, httpUrl, secondLayerDuration, singleSpanDuration)
+
+    w.addChild(ctx, tracers[0], "2", w.serviceNames[0], httpStatusCode, httpUrl, firstLayerDuration, singleSpanDuration)
+
+    child3Ctx := w.addChild(ctx, tracers[0], "3", w.serviceNames[3], httpStatusCode, httpUrl, firstLayerDuration, singleSpanDuration)
+    grandchild3Ctx := w.addChild(child3Ctx, tracers[8], "31", w.serviceNames[8], httpStatusCode, httpUrl, secondLayerDuration, singleSpanDuration)
+    greatgrandchild3Ctx := w.addChild(grandchild3Ctx, tracers[8], "311", w.serviceNames[8], httpStatusCode, httpUrl, thirdLayerDuration, singleSpanDuration)
+    w.addChild(greatgrandchild3Ctx, tracers[7], "312", w.serviceNames[7], httpStatusCode, httpUrl, fourthLayerDuration, singleSpanDuration)
 
     for i := 0; i< 5; i++ {
-        child4Ctx := w.addChild(ctx, tracers[0], "4", w.serviceNames[0], httpStatusCode, httpUrl)
-        w.addChild(child4Ctx, tracers[7], "41", w.serviceNames[7], httpStatusCode, httpUrl)
+        child4Ctx := w.addChild(ctx, tracers[0], "4", w.serviceNames[0], httpStatusCode, httpUrl, firstLayerDuration, singleSpanDuration)
+        w.addChild(child4Ctx, tracers[7], "41", w.serviceNames[7], httpStatusCode, httpUrl, secondLayerDuration, singleSpanDuration)
     }
 
-    child5Ctx := w.addChild(ctx, tracers[0], "5", w.serviceNames[0], httpStatusCode, httpUrl)
-    w.addChild(child5Ctx, tracers[10], "51", w.serviceNames[10], httpStatusCode, httpUrl)
+    child5Ctx := w.addChild(ctx, tracers[0], "5", w.serviceNames[0], httpStatusCode, httpUrl, firstLayerDuration, singleSpanDuration)
+    w.addChild(child5Ctx, tracers[10], "51", w.serviceNames[10], httpStatusCode, httpUrl, secondLayerDuration, singleSpanDuration)
 
     for i := 0; i< 2; i++ {
-        child6Ctx := w.addChild(ctx, tracers[0], "6", w.serviceNames[0], httpStatusCode, httpUrl)
-        w.addChild(child6Ctx, tracers[4], "61", w.serviceNames[4], httpStatusCode, httpUrl)
+        child6Ctx := w.addChild(ctx, tracers[0], "6", w.serviceNames[0], httpStatusCode, httpUrl, firstLayerDuration, singleSpanDuration)
+        w.addChild(child6Ctx, tracers[4], "61", w.serviceNames[4], httpStatusCode, httpUrl, secondLayerDuration, singleSpanDuration)
     }
 
     limiter.Wait(context.Background())
-    opt := trace.WithTimestamp(time.Now().Add(fakeSpanDuration))
+    opt := trace.WithTimestamp(startTime.Add(fakeSpanDuration))
     sp.End(opt)
 }
 
@@ -187,28 +216,36 @@ func (w worker) simulateTrace2(limiter *rate.Limiter, tracers []trace.Tracer) {
         attribute.String("service.name", serviceName),
         semconv.HTTPStatusCodeKey.String(httpStatusCode),
         semconv.HTTPURLKey.String(httpUrl),
-    ))
+    ), trace.WithTimestamp(startTime))
+
+    // need to do error checking!
+    totalSpans := 26
+
+    traceDuration := getRandomNum(w.minDuration, w.maxDuration)
+    singleSpanDuration := getSingleFakeSpanDuration(traceDuration, totalSpans)
+    firstLayerDuration := getLayerEndTime(startTime, singleSpanDuration, 1)
+    secondLayerDuration := getLayerEndTime(startTime, singleSpanDuration, 2)
 
 
-    child1Ctx := w.addChild(ctx, tracers[0], "1", w.serviceNames[0],httpStatusCode, httpUrl)
-    w.addChild(child1Ctx, tracers[4], "11", w.serviceNames[4], httpStatusCode, httpUrl)
+    child1Ctx := w.addChild(ctx, tracers[0], "1", w.serviceNames[0],httpStatusCode, httpUrl, firstLayerDuration, singleSpanDuration)
+    w.addChild(child1Ctx, tracers[4], "11", w.serviceNames[4], httpStatusCode, httpUrl, secondLayerDuration, singleSpanDuration)
 
-    child2Ctx := w.addChild(ctx, tracers[0], "2", w.serviceNames[0], httpStatusCode, httpUrl)
-    w.addChild(child2Ctx, tracers[7], "21", w.serviceNames[7], httpStatusCode, httpUrl)
+    child2Ctx := w.addChild(ctx, tracers[0], "2", w.serviceNames[0], httpStatusCode, httpUrl, firstLayerDuration, singleSpanDuration)
+    w.addChild(child2Ctx, tracers[7], "21", w.serviceNames[7], httpStatusCode, httpUrl, secondLayerDuration, singleSpanDuration)
 
-    w.addChild(ctx, tracers[0], "3", w.serviceNames[0], httpStatusCode, httpUrl)
+    w.addChild(ctx, tracers[0], "3", w.serviceNames[0], httpStatusCode, httpUrl, firstLayerDuration, singleSpanDuration)
 
     for i := 0; i< 9; i++ {
-        child4Ctx := w.addChild(ctx, tracers[0], "4", w.serviceNames[0], httpStatusCode, httpUrl)
-        w.addChild(child4Ctx, tracers[4], "41", w.serviceNames[4], httpStatusCode, httpUrl)
+        child4Ctx := w.addChild(ctx, tracers[0], "4", w.serviceNames[0], httpStatusCode, httpUrl, firstLayerDuration, singleSpanDuration)
+        w.addChild(child4Ctx, tracers[4], "41", w.serviceNames[4], httpStatusCode, httpUrl, secondLayerDuration, singleSpanDuration)
     }
 
-    child5Ctx := w.addChild(ctx, tracers[0], "5", w.serviceNames[0], httpStatusCode, httpUrl)
-    w.addChild(child5Ctx, tracers[1], "51", w.serviceNames[1], httpStatusCode, httpUrl)
+    child5Ctx := w.addChild(ctx, tracers[0], "5", w.serviceNames[0], httpStatusCode, httpUrl, firstLayerDuration, singleSpanDuration)
+    w.addChild(child5Ctx, tracers[1], "51", w.serviceNames[1], httpStatusCode, httpUrl, secondLayerDuration, singleSpanDuration)
 
     limiter.Wait(context.Background())
 
-    opt := trace.WithTimestamp(time.Now().Add(fakeSpanDuration))
+    opt := trace.WithTimestamp(startTime.Add(traceDuration))
     sp.End(opt)
 
 }
