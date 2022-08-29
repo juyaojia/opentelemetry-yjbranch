@@ -111,6 +111,7 @@ func getRandStatusCode() string {
 	return statusCode
 }
 
+// get stub span kind
 func getRandSpanKind() string {
 	var spanKind string
 	randNum := getRandomNum(1, 2)
@@ -136,6 +137,7 @@ func (w worker) getRootAttribute(servicesIndex int) (string, string, string, str
 	return spanKind, serviceName, httpStatusCode, httpUrl
 }
 
+// perform preparation and start the trace generation
 func (w worker) simulateTraces() {
 	// set up all tracers
 	tracers := w.setUpTracers()
@@ -165,6 +167,7 @@ func (w worker) simulateTraces() {
 	w.wg.Done()
 }
 
+// find the root span of all the spans in the trace
 func findRoot(spans []Span) int {
 	for i := 0; i < len(spans); i++ {
 		if len(spans[i].parentId) == 0 {
@@ -174,6 +177,7 @@ func findRoot(spans []Span) int {
 	return -1
 }
 
+// find the index of the serviceName in serviceName, will be used to index tracer as well
 func findIndex(target string, serviceName [12]string) int {
 	for i := 0; i < len(serviceName); i++ {
 		if serviceName[i] == target {
@@ -183,6 +187,7 @@ func findIndex(target string, serviceName [12]string) int {
 	return -1
 }
 
+// generate the Trace
 func (w worker) generateTrace(parentCtx context.Context, index int, limiter *rate.Limiter, tracers []trace.Tracer, httpStatusCode string, httpUrl string, spans []Span, childrenList [][]int) {
 	// base case
 	if len(childrenList[index]) <= 0 {
@@ -190,11 +195,12 @@ func (w worker) generateTrace(parentCtx context.Context, index int, limiter *rat
 	}
 	for i := 0; i < len(childrenList[index]); i++ {
 		tracerIndex := findIndex(spans[index].serviceName, w.serviceNames)
-		childCtx := w.addChild(parentCtx, tracers[tracerIndex], "message from span "+strconv.Itoa(index), w.serviceNames[tracerIndex], httpStatusCode, httpUrl, spans, childrenList)
-		generateTrace(childCtx, childrenList[index][i], limiter, tracers, httpStatusCode, httpUrl, spans, childrenList)
+		childCtx := w.addChild(parentCtx, tracers[tracerIndex], "message from span "+strconv.Itoa(index), w.serviceNames[tracerIndex], httpStatusCode, httpUrl)
+		w.generateTrace(childCtx, childrenList[index][i], limiter, tracers, httpStatusCode, httpUrl, spans, childrenList)
 	}
 }
 
+// create the context for the root and then start generate trace from the root
 func (w worker) generateTraceHelper(spans []Span, limiter *rate.Limiter, tracers []trace.Tracer, childrenList [][]int) {
 	rootIndex := findRoot(spans)
 	spanKind, serviceName, httpStatusCode, httpUrl := w.getRootAttribute(rootIndex)
@@ -205,7 +211,7 @@ func (w worker) generateTraceHelper(spans []Span, limiter *rate.Limiter, tracers
 		semconv.HTTPURLKey.String(httpUrl),
 	))
 
-	generateTrace(ctx, rootIndex, limiter, tracers, httpStatusCode, httpUrl, spans, childrenList)
+	w.generateTrace(ctx, rootIndex, limiter, tracers, httpStatusCode, httpUrl, spans, childrenList)
 	limiter.Wait(context.Background())
 	opt := trace.WithTimestamp(time.Now().Add(fakeSpanDuration))
 	sp.End(opt)
