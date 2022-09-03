@@ -188,23 +188,24 @@ func findIndex(target string, serviceName [12]string) int {
 }
 
 // generate the Trace
-func (w worker) generateTrace(parentCtx context.Context, index int, limiter *rate.Limiter, tracers []trace.Tracer, httpStatusCode string, httpUrl string, spans []Span, childrenList [][]int) {
+func (w worker) generateTrace(parentCtx context.Context, spanIndex int, limiter *rate.Limiter, tracers []trace.Tracer, httpStatusCode string, httpUrl string, spans []Span, childrenList [][]int) {
 	// base case
-	if len(childrenList[index]) <= 0 {
+	if len(childrenList[spanIndex]) <= 0 {
 		return
 	}
-	for i := 0; i < len(childrenList[index]); i++ {
-		tracerIndex := findIndex(spans[index].serviceName, w.serviceNames)
-		childCtx := w.addChild(parentCtx, tracers[tracerIndex], "message from span "+strconv.Itoa(index), w.serviceNames[tracerIndex], httpStatusCode, httpUrl)
-		w.generateTrace(childCtx, childrenList[index][i], limiter, tracers, httpStatusCode, httpUrl, spans, childrenList)
+	for i := 0; i < len(childrenList[spanIndex]); i++ {
+		tracerIndex := findIndex(spans[spanIndex].serviceName, w.serviceNames)
+		childCtx := w.addChild(parentCtx, tracers[tracerIndex], "message from span "+strconv.Itoa(spanIndex), w.serviceNames[tracerIndex], httpStatusCode, httpUrl)
+		w.generateTrace(childCtx, childrenList[spanIndex][i], limiter, tracers, httpStatusCode, httpUrl, spans, childrenList)
 	}
 }
 
 // create the context for the root and then start generate trace from the root
 func (w worker) generateTraceHelper(spans []Span, limiter *rate.Limiter, tracers []trace.Tracer, childrenList [][]int) {
 	rootIndex := findRoot(spans)
-	spanKind, serviceName, httpStatusCode, httpUrl := w.getRootAttribute(rootIndex)
-	ctx, sp := tracers[rootIndex].Start(context.Background(), "lets-go", trace.WithAttributes(
+	serviceIndex := findIndex(spans[rootIndex].serviceName, w.serviceNames)
+	spanKind, serviceName, httpStatusCode, httpUrl := w.getRootAttribute(serviceIndex)
+	ctx, sp := tracers[serviceIndex].Start(context.Background(), "lets-go", trace.WithAttributes(
 		attribute.String("span.kind", spanKind), // is there a semantic convention for this?
 		attribute.String("service.name", serviceName),
 		semconv.HTTPStatusCodeKey.String(httpStatusCode),
@@ -219,48 +220,52 @@ func (w worker) generateTraceHelper(spans []Span, limiter *rate.Limiter, tracers
 
 func getFakeSpanList() []Span {
 	span0 := Span{
-		serviceName: "span0",
+		serviceName: "frontend",
 		attributes:  []string{"a1", "a2", "a3"},
 		spanId:      "span0spanidhash",
 		parentId:    "",
 	}
 
 	span1 := Span{
-		serviceName: "span1",
+		serviceName: "adservice",
 		attributes:  []string{"a1", "a2", "a3"},
 		spanId:      "span1spanidhash",
 		parentId:    "span0spanidhash",
 	}
 	span2 := Span{
-		serviceName: "span2",
+		serviceName: "cartservice",
 		attributes:  []string{"a1", "a2", "a3"},
 		spanId:      "span2spanidhash",
 		parentId:    "span0spanidhash",
 	}
 	span3 := Span{
-		serviceName: "span3",
+		serviceName: "checkoutservice",
 		attributes:  []string{"a1", "a2", "a3"},
 		spanId:      "span3spanidhash",
 		parentId:    "span1spanidhash",
 	}
 	span4 := Span{
-		serviceName: "span4",
+		serviceName: "currencyservice",
 		attributes:  []string{"a1", "a2", "a3"},
 		spanId:      "span4spanidhash",
 		parentId:    "span3spanidhash",
 	}
 	span5 := Span{
-		serviceName: "span5",
+		serviceName: "emailservice",
 		attributes:  []string{"a1", "a2", "a3"},
 		spanId:      "span5spanidhash",
 		parentId:    "span2spanidhash",
 	}
 	span6 := Span{
-		serviceName: "span6",
+		serviceName: "paymentservice",
 		attributes:  []string{"a1", "a2", "a3"},
 		spanId:      "span6spanidhash",
 		parentId:    "span2spanidhash",
 	}
 	spans := []Span{span0, span1, span2, span3, span4, span5, span6}
 	return spans
+}
+
+func main() {
+
 }
