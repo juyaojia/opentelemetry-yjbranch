@@ -200,7 +200,6 @@ func (w worker) generateTrace(parentCtx context.Context, spanIndex int, limiter 
 		childCtx := w.addChild(parentCtx, tracers[tracerIndex], "message from span "+strconv.Itoa(spanIndex), w.serviceNames[tracerIndex], httpStatusCode, httpUrl)
         w.generateTrace(childCtx, childrenList[spanIndex][i], limiter, tracers, httpStatusCode, httpUrl, spans, childrenList)
 	}
-    fmt.Println()
 }
 
 // create the context for the root and then start generate trace from the root
