@@ -151,6 +151,7 @@ func (w worker) simulateTraces() {
 		{4},
 		{},
 		{},
+        {},
 	}
 
 	var i int
@@ -193,11 +194,13 @@ func (w worker) generateTrace(parentCtx context.Context, spanIndex int, limiter 
 	if len(childrenList[spanIndex]) <= 0 {
 		return
 	}
+    
 	for i := 0; i < len(childrenList[spanIndex]); i++ {
 		tracerIndex := findIndex(spans[spanIndex].serviceName, w.serviceNames)
 		childCtx := w.addChild(parentCtx, tracers[tracerIndex], "message from span "+strconv.Itoa(spanIndex), w.serviceNames[tracerIndex], httpStatusCode, httpUrl)
-		w.generateTrace(childCtx, childrenList[spanIndex][i], limiter, tracers, httpStatusCode, httpUrl, spans, childrenList)
+        w.generateTrace(childCtx, childrenList[spanIndex][i], limiter, tracers, httpStatusCode, httpUrl, spans, childrenList)
 	}
+    fmt.Println()
 }
 
 // create the context for the root and then start generate trace from the root
@@ -264,8 +267,4 @@ func getFakeSpanList() []Span {
 	}
 	spans := []Span{span0, span1, span2, span3, span4, span5, span6}
 	return spans
-}
-
-func main() {
-
 }
