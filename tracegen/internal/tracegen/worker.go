@@ -17,7 +17,9 @@ package tracegen // import "github.com/open-telemetry/opentelemetry-collector-co
 
 import (
 	"context"
+	"encoding/json"
 	"math/rand"
+	"os"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -34,9 +36,9 @@ import (
 
 type Span struct {
 	serviceName string
-	attributes  []string
-	spanId      string // hash
-	parentId    string // like a hash
+	// attributes  []string
+	spanId   string // hash
+	parentId string // like a hash
 }
 
 type worker struct {
@@ -143,15 +145,9 @@ func (w worker) simulateTraces() {
 	tracers := w.setUpTracers()
 	limiter := rate.NewLimiter(w.limitPerSecond, 1)
 
-	spans := getFakeSpanList()
-	childrenList := [][]int{
-		{1, 2},
-		{3},
-		{5, 6},
-		{4},
-		{},
-		{},
-	}
+	// entry point!
+	filename := "test1.json"
+	spans, childrenList := extractSpans(filename)
 
 	var i int
 	for atomic.LoadUint32(w.running) == 1 {
@@ -193,9 +189,10 @@ func (w worker) generateTrace(parentCtx context.Context, spanIndex int, limiter 
 	if len(childrenList[spanIndex]) <= 0 {
 		return
 	}
+
 	for i := 0; i < len(childrenList[spanIndex]); i++ {
-		tracerIndex := findIndex(spans[spanIndex].serviceName, w.serviceNames)
-		childCtx := w.addChild(parentCtx, tracers[tracerIndex], "message from span "+strconv.Itoa(spanIndex), w.serviceNames[tracerIndex], httpStatusCode, httpUrl)
+		tracerIndex := findIndex(spans[childrenList[spanIndex][i]].serviceName, w.serviceNames)
+		childCtx := w.addChild(parentCtx, tracers[tracerIndex], "message from span "+strconv.Itoa(childrenList[spanIndex][i]), w.serviceNames[tracerIndex], httpStatusCode, httpUrl)
 		w.generateTrace(childCtx, childrenList[spanIndex][i], limiter, tracers, httpStatusCode, httpUrl, spans, childrenList)
 	}
 }
@@ -218,54 +215,95 @@ func (w worker) generateTraceHelper(spans []Span, limiter *rate.Limiter, tracers
 	sp.End(opt)
 }
 
-func getFakeSpanList() []Span {
-	span0 := Span{
-		serviceName: "frontend",
-		attributes:  []string{"a1", "a2", "a3"},
-		spanId:      "span0spanidhash",
-		parentId:    "",
+// Scott's code
+// for generalized load generator
+// @return: service list - list of services, each being a Service struct containing its spanID, parentID, and processType.
+// @return: service child list - lists of children services of the service at the corresponding index in serviceList.
+func extractSpans(fileName string) ([]Span, [][]int) {
+	content, err := os.ReadFile(fileName)
+	if err != nil {
+		panic(err)
 	}
 
-	span1 := Span{
-		serviceName: "adservice",
-		attributes:  []string{"a1", "a2", "a3"},
-		spanId:      "span1spanidhash",
-		parentId:    "span0spanidhash",
+	serviceList := make([]Span, 0)
+
+	var all map[string]interface{}
+	err = json.Unmarshal([]byte(content), &all)
+	if err != nil {
+		panic(err)
 	}
-	span2 := Span{
-		serviceName: "cartservice",
-		attributes:  []string{"a1", "a2", "a3"},
-		spanId:      "span2spanidhash",
-		parentId:    "span0spanidhash",
+
+	dataList, ok := all["data"].([]interface{})
+	if !ok {
+		panic("dataList is not a list!")
 	}
-	span3 := Span{
-		serviceName: "checkoutservice",
-		attributes:  []string{"a1", "a2", "a3"},
-		spanId:      "span3spanidhash",
-		parentId:    "span1spanidhash",
+
+	for i := 0; i < len(dataList); i++ {
+		dataMap, ok1 := dataList[i].(map[string]interface{})
+		if !ok1 {
+			panic("dataMap is not a map!")
+		}
+		spanList, ok2 := dataMap["spans"].([]interface{})
+		if !ok2 {
+			panic("spanList is not a list!")
+		}
+		processMap, ok3 := dataMap["processes"].(map[string]interface{})
+		if !ok3 {
+			panic("processMap is not a map!")
+		}
+
+		for j := 0; j < len(spanList); j++ {
+			spanMap, ok1 := spanList[j].(map[string]interface{})
+			if !ok1 {
+				panic("spanMap is not a map!")
+			}
+			spanID, ok2 := spanMap["spanID"]
+			if !ok2 {
+				panic("spanMap[spanID] is not a string!")
+			}
+			var parentID string
+			referenceList, ok3 := spanMap["references"].([]interface{})
+			if !ok3 {
+				panic("referenceList is not a list!")
+			}
+			if len(referenceList) > 0 {
+				referenceMap, ok4 := referenceList[0].(map[string]interface{})
+				if !ok4 {
+					panic("referenceMap is not a map!")
+				}
+				parentID = referenceMap["spanID"].(string)
+			}
+
+			processTypeMap, ok7 := processMap[spanMap["processID"].(string)].(map[string]interface{})
+			if !ok7 {
+				panic("processTypeMap is not a map!")
+			}
+			processType := processTypeMap["serviceName"].(string)
+
+			service := Span{
+				spanId:      spanID.(string),
+				parentId:    parentID,
+				serviceName: processType,
+			}
+			serviceList = append(serviceList, service)
+		}
 	}
-	span4 := Span{
-		serviceName: "currencyservice",
-		attributes:  []string{"a1", "a2", "a3"},
-		spanId:      "span4spanidhash",
-		parentId:    "span3spanidhash",
+
+	serviceChildList := make([][]int, len(serviceList))
+
+	for i := range serviceList {
+		parent := serviceList[i].parentId
+		if parent != "" {
+			for j := range serviceList {
+				if serviceList[j].spanId == parent {
+					serviceChildList[j] = append(serviceChildList[j], i)
+					break
+				}
+			}
+		}
 	}
-	span5 := Span{
-		serviceName: "emailservice",
-		attributes:  []string{"a1", "a2", "a3"},
-		spanId:      "span5spanidhash",
-		parentId:    "span2spanidhash",
-	}
-	span6 := Span{
-		serviceName: "paymentservice",
-		attributes:  []string{"a1", "a2", "a3"},
-		spanId:      "span6spanidhash",
-		parentId:    "span2spanidhash",
-	}
-	spans := []Span{span0, span1, span2, span3, span4, span5, span6}
-	return spans
+
+	return serviceList, serviceChildList
 }
 
-func main() {
-
-}
+// Scott's code
